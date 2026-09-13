@@ -45,6 +45,16 @@ from seed.eligibility import refund_needs_approval
 # RESP-2 and RESP-3 are only partly represented in the starter prompt. Manual
 # conversations in Homework 1 determine whether one omission causes a failure
 # worth correcting.
+#
+# HW1 Part C finding: the starter prompt stated the RESP-2-adjacent
+# tool-verification principle for refunds ("never promise or issue a refund
+# before calling get_order and checking eligibility") but had no equivalent
+# line for cancellation, so the model would infer non-cancellability itself
+# from an order's status field instead of calling cancel_order. Manual test:
+# shopper 1 asking to cancel order 4127 (delivered). Before the fix, the
+# agent answered correctly but without a cancel_order call; the added Tool
+# guidance line below closes that gap by extending the same verification
+# principle to cancellation.
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT_TEMPLATE = """\
@@ -67,6 +77,9 @@ or credential changes, and anything outside Cartwheel.
 - Cite the policy id (for example cw-returns) for every policy claim.
 - Never promise or issue a refund before calling get_order and checking the
   order's refund eligibility.
+- Never tell a shopper an order can't be cancelled before calling
+  cancel_order and reporting its result. Do not decide cancellation
+  eligibility yourself from an order's status field.
 
 ## Escalation
 When you are unsure, or an action is above your authority (for example a
