@@ -18,12 +18,14 @@ They are marked xfail and flip to passing as you implement each function.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from rapidfuzz import fuzz
 
 from agent import db
-from agent.auth import AuthContext, can_cancel_order, permission_denied
+from agent.auth import AuthContext, can_view_order, can_cancel_order, permission_denied
+from agent.config import load_facts
 from agent.helpcenter import load_policy_docs
 from agent.killswitch import kill_switch
 
@@ -312,3 +314,81 @@ def find_order(ctx: AuthContext, query: str) -> dict[str, Any]:
     scored.sort(key=lambda pair: (-pair[0], pair[1].id))
     matches = [order for _, order in scored[:FIND_ORDER_MAX_RESULTS]]
     return {"ok": True, "orders": [order.to_public_dict() for order in matches]}
+
+
+def check_return_eligibility(ctx: AuthContext, order_id: int) -> dict[str, Any]:
+    """Check whether an order is eligible for a return/refund, with a citable
+    policy id and deadline. Risk tier: read. Custom HW1 tool (Part A).
+
+    Motivation: get_order already reports a bare `refund_eligible` boolean,
+    but gives the model nothing to cite when explaining a denial (Part B
+    observed the agent falling back to a vague "system check" instead of the
+    actual policy rule, RESP-1). This tool surfaces the reasoning directly:
+    the applicable return window, the deadline date it produces, and the
+    policy id backing that window (a store-specific override when one
+    exists, otherwise the platform default).
+
+    Access rules match get_order: shoppers see only their own orders,
+    merchants only their own store's orders, support any order.
+
+    Args:
+        ctx: The caller's auth context.
+        order_id: The order to check.
+
+    Returns:
+        On success: {"ok": True, "order_id": int, "status": str,
+        "eligible": bool, "as_of": str, "delivered_at": str | None,
+        "return_window_days": int, "deadline": str | None, "reason": str,
+        "policy_id": str}. `deadline` is delivered_at + return_window_days,
+        or None if the order has not been delivered yet. `as_of` is today's
+        date in the order's world, so the caller never has to guess whether
+        a deadline has passed. `eligible` is the same value get_order reports
+        (the seed's ground-truth eligibility function); `reason` explains it
+        in plain language (not delivered yet, window passed, or eligible).
+        On failure: "not_found" for an unknown order, "permission_denied"
+        for an order outside the caller's scope.
+    """
+    with db.connection() as conn:
+        order = db.get_order(conn, order_id)
+        if order is None:
+            return {"ok": False, "error": "not_found", "reason": f"no order #{order_id}"}
+        if not can_view_order(ctx, order.user_id, order.store_id):
+            return permission_denied(
+                f"role '{ctx.role}' (user {ctx.user_id}) may not view order #{order_id}"
+            )
+        store = db.get_store(conn, order.store_id)
+        as_of = db.world_asof(conn)
+
+    facts = load_facts()
+    platform_window_days = facts["return_window_days"]
+    policy_id = "cw-returns"
+    window_days = platform_window_days
+    if store is not None and store.return_window_days_override is not None:
+        window_days = store.return_window_days_override
+        override_doc = get_policy(ctx, f"store-{store.slug}-policy")
+        if override_doc.get("ok"):
+            policy_id = override_doc["policy_id"]
+
+    deadline = None
+    if order.delivered_at is not None:
+        deadline = order.delivered_at + timedelta(days=window_days)
+
+    if order.status != "delivered":
+        reason = f"order status is '{order.status}'; only delivered orders are return-eligible"
+    elif deadline is not None and as_of > deadline:
+        reason = f"the {window_days}-day return window ended {deadline.isoformat()}"
+    else:
+        reason = f"within the {window_days}-day return window (ends {deadline.isoformat()})"
+
+    return {
+        "ok": True,
+        "order_id": order.id,
+        "status": order.status,
+        "eligible": order.refund_eligible,
+        "as_of": as_of.isoformat(),
+        "delivered_at": order.delivered_at.isoformat() if order.delivered_at else None,
+        "return_window_days": window_days,
+        "deadline": deadline.isoformat() if deadline else None,
+        "reason": reason,
+        "policy_id": policy_id,
+    }
