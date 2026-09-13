@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cartwheel Prompt Playground</title>
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --panel: #ffffff;
+    --border: #e4e1da;
+    --text: #24211c;
+    --text-dim: #6b6558;
+    --accent: #b5451b;
+    --accent-soft: #f4e3d8;
+    --green: #2f7a3d;
+    --green-bg: #e9f5ea;
+    --red: #b3341c;
+    --red-bg: #fbeae5;
+    --user-bubble: #24211c;
+    --user-bubble-text: #ffffff;
+    --agent-bubble: #ffffff;
+    --shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow-x: hidden;
+  }
+  body { display: flex; flex-direction: column; }
+
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px;
+    padding: 14px 20px; background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  header h1 {
+    font-size: 16px; font-weight: 700; margin: 0;
+    white-space: nowrap;
+  }
+  .role-meta {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 220px;
+  }
+  .role-switch {
+    display: flex; gap: 4px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 8px; padding: 3px;
+  }
+  .role-switch button {
+    border: none; background: transparent; padding: 6px 14px;
+    border-radius: 6px; font-size: 13px; font-weight: 600;
+    color: var(--text-dim); cursor: pointer;
+  }
+  .role-switch button.active {
+    background: var(--text); color: #fff;
+  }
+  .role-meta { font-size: 12px; color: var(--text-dim); }
+  .spacer { flex: 1; }
+  #reset-btn {
+    border: 1px solid var(--border); background: var(--panel);
+    padding: 6px 12px; border-radius: 6px; font-size: 12px;
+    cursor: pointer; color: var(--text-dim);
+  }
+  #reset-btn:hover { color: var(--text); }
+
+  .layout { display: flex; flex: 1; min-height: 0; }
+
+  /* Sidebar */
+  aside {
+    width: 260px; flex-shrink: 0; overflow-y: auto;
+    border-right: 1px solid var(--border); background: var(--panel);
+    padding: 16px;
+  }
+  aside h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--text-dim); margin: 18px 0 8px;
+  }
+  aside h2:first-child { margin-top: 0; }
+  .data-card {
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 8px; font-size: 12.5px;
+    background: var(--bg);
+  }
+  .data-card .row1 { font-weight: 700; display: flex; justify-content: space-between; }
+  .data-card .row2 { color: var(--text-dim); margin-top: 2px; }
+  .badge {
+    display: inline-block; font-size: 10px; font-weight: 700;
+    padding: 1px 6px; border-radius: 999px; margin-left: 6px;
+  }
+  .badge.delivered { background: var(--green-bg); color: var(--green); }
+  .badge.cancelled, .badge.refunded { background: var(--red-bg); color: var(--red); }
+  .note { font-size: 12px; color: var(--text-dim); font-style: italic; margin-bottom: 8px; }
+
+  /* Main column */
+  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  .suggestions {
+    padding: 12px 20px; border-bottom: 1px solid var(--border);
+    background: var(--panel); overflow-x: auto; flex-shrink: 0;
+  }
+  .suggestions-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--text-dim); margin-bottom: 8px;
+  }
+  .chip-row { display: flex; gap: 8px; flex-wrap: nowrap; }
+  .chip {
+    border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px;
+    background: var(--bg); cursor: pointer; text-align: left;
+    width: 220px; flex-shrink: 0;
+  }
+  .chip:hover { border-color: var(--text-dim); }
+  .chip .prompt-text { font-size: 12.5px; font-weight: 600; line-height: 1.3; }
+  .chip .expect {
+    font-size: 11px; margin-top: 4px; font-weight: 700;
+  }
+  .chip.good .expect { color: var(--green); }
+  .chip.bad .expect { color: var(--red); }
+  .chip .reason { font-size: 11px; color: var(--text-dim); margin-top: 1px; }
+
+  .thread {
+    flex: 1; overflow-y: auto; padding: 20px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .msg { display: flex; }
+  .msg.user { justify-content: flex-end; }
+  .bubble {
+    max-width: 70%; padding: 10px 14px; border-radius: 12px;
+    font-size: 14px; line-height: 1.5; white-space: pre-wrap;
+    box-shadow: var(--shadow);
+  }
+  .msg.user .bubble { background: var(--user-bubble); color: var(--user-bubble-text); border-bottom-right-radius: 2px; }
+  .msg.agent .bubble { background: var(--agent-bubble); border: 1px solid var(--border); border-bottom-left-radius: 2px; }
+  .msg.system .bubble {
+    background: transparent; border: none; color: var(--text-dim);
+    font-size: 12px; font-style: italic; box-shadow: none; margin: 0 auto;
+  }
+  .msg.pending .bubble { color: var(--text-dim); font-style: italic; }
+  .bubble table { border-collapse: collapse; margin: 6px 0; font-size: 13px; }
+  .bubble th, .bubble td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+  .bubble th { background: var(--bg); }
+  .bubble ul { margin: 4px 0; padding-left: 20px; }
+  .bubble p { margin: 0 0 8px; }
+  .bubble p:last-child { margin-bottom: 0; }
+
+  .composer {
+    display: flex; gap: 8px; padding: 14px 16px;
+    border-top: 1px solid var(--border); background: var(--panel); flex-shrink: 0;
+  }
+  .composer input {
+    flex: 1; min-width: 0; padding: 10px 14px; border-radius: 10px;
+    border: 1px solid var(--border); font-size: 14px; background: var(--bg); color: var(--text);
+  }
+  .composer input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .composer button {
+    padding: 10px 14px; border-radius: 10px; border: none;
+    background: var(--accent); color: #fff; font-weight: 700; font-size: 13px;
+    cursor: pointer; flex-shrink: 0;
+  }
+  .composer button:disabled { opacity: 0.5; cursor: default; }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #d8d4cb; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🛒 Cartwheel Playground</h1>
+  <div class="role-switch" id="role-switch">
+    <button data-role="shopper" class="active">Shopper</button>
+    <button data-role="merchant">Merchant</button>
+    <button data-role="support">Support</button>
+  </div>
+  <span class="role-meta" id="role-meta"></span>
+  <div class="spacer"></div>
+  <button id="reset-btn">↺ New conversation</button>
+</header>
+
+<div class="layout">
+  <aside id="sidebar">
+    <h2>Loading sample data…</h2>
+  </aside>
+
+  <main>
+    <div class="suggestions">
+      <div class="suggestions-label">Suggested prompts — <span style="color:var(--green)">green = should work</span>, <span style="color:var(--red)">red = designed to fail</span></div>
+      <div class="chip-row" id="chip-row"></div>
+    </div>
+
+    <div class="thread" id="thread">
+      <div class="msg system"><div class="bubble">Pick a role, try a suggested prompt, or type your own message below.</div></div>
+    </div>
+
+    <div class="composer">
+      <input id="input" type="text" placeholder="Type a message…" autocomplete="off" />
+      <button id="send-btn">Send</button>
+    </div>
+  </main>
+</div>
+
+<script>
+const ROLE_LABELS = {
+  shopper: "user 1",
+  merchant: "user 9002 · store 2 (Juniper Home Goods)",
+  support: "user 9501",
+};
+
+// Curated from real, verified HW1 Part B testing -- every "should work" case
+// uses real data we've confirmed exists; every "designed to fail" case is a
+// failure mode we've already observed and understand.
+const SUGGESTIONS = {
+  shopper: [
+    { text: "What's the status of order 4127?", good: true, reason: "Your order, in scope." },
+    { text: "Can I return order 4127?", good: true, reason: "Delivered June 19, within the 30-day window." },
+    { text: "I'd like a refund for order 4455, I changed my mind", good: true, reason: "Real order, but $240 > $100 threshold — expect it queued for a human, not instant." },
+    { text: "Can I get a refund for order 3980?", good: false, reason: "Delivered May 17 — return window has closed." },
+    { text: "I want to cancel order 4127", good: false, reason: "Already delivered — cancellation only works pre-shipment." },
+    { text: "What's the status of order 999999?", good: false, reason: "Order doesn't exist." },
+    { text: "What's the return window for Juniper Home Goods?", good: true, reason: "Real store, documented 14-day override (you have orders there too)." },
+    { text: "Can you update the email on my account to new@example.com?", good: false, reason: "Account changes require human escalation, not self-service." },
+    { text: "What's the weather today?", good: false, reason: "Outside Cartwheel's scope entirely." },
+  ],
+  merchant: [
+    { text: "Show me my store's recent orders", good: true, reason: "Scoped to your own store." },
+    { text: "What products does my store sell?", good: true, reason: "Real catalog data for store 2." },
+    { text: "Find orders for the Walnut Dinner Plate Set", good: true, reason: "Real product in your store (order 40)." },
+    { text: "Show me order 4127", good: false, reason: "Belongs to Blue Heron Ceramics (store 1), not yours." },
+    { text: "Cancel order 4127", good: false, reason: "Not your store's order — permission denied." },
+    { text: "Change my store's return policy to 60 days", good: false, reason: "Policy changes aren't a supported self-service action." },
+  ],
+  support: [
+    { text: "Show me order 4127", good: true, reason: "Support can view any order, any store." },
+    { text: "Show me order 6", good: true, reason: "A different store's order — still in scope for support." },
+    { text: "Find orders matching 'teapot'", good: true, reason: "Broad search available to support." },
+    { text: "What are my recent orders?", good: false, reason: "Support staff have no orders of their own." },
+    { text: "Show me order 123456789", good: false, reason: "Order doesn't exist." },
+  ],
+};
+
+let currentRole = "shopper";
+const $ = (sel) => document.querySelector(sel);
+const thread = $("#thread");
+
+function renderRoleMeta() {
+  $("#role-meta").textContent = ROLE_LABELS[currentRole];
+}
+
+function renderSuggestions() {
+  const row = $("#chip-row");
+  row.innerHTML = "";
+  for (const s of SUGGESTIONS[currentRole]) {
+    const chip = document.createElement("button");
+    chip.className = "chip " + (s.good ? "good" : "bad");
+    chip.innerHTML = `
+      <div class="prompt-text">${escapeHtml(s.text)}</div>
+      <div class="expect">${s.good ? "✓ should work" : "✕ designed to fail"}</div>
+      <div class="reason">${escapeHtml(s.reason)}</div>
+    `;
+    chip.onclick = () => sendMessage(s.text);
+    row.appendChild(chip);
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Small, dependency-free markdown renderer covering what this agent
+// actually produces: tables, bold, bullet lists, paragraphs.
+function renderMarkdown(src) {
+  const lines = src.split("\n");
+  let html = "";
+  let i = 0;
+  const inline = (s) => escapeHtml(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Table: a header row followed by a |---|---| separator.
+    if (line.includes("|") && lines[i + 1] && /^\s*\|?[\s:|-]+\|[\s:|-]*\s*$/.test(lines[i + 1])) {
+      const cells = (row) => row.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      const header = cells(line);
+      html += "<table><thead><tr>" + header.map((c) => `<th>${inline(c)}</th>`).join("") + "</tr></thead><tbody>";
+      i += 2;
+      while (i < lines.length && lines[i].includes("|")) {
+        html += "<tr>" + cells(lines[i]).map((c) => `<td>${inline(c)}</td>`).join("") + "</tr>";
+        i++;
+      }
+      html += "</tbody></table>";
+      continue;
+    }
+
+    // Bullet list.
+    if (/^\s*-\s+/.test(line)) {
+      html += "<ul>";
+      while (i < lines.length && /^\s*-\s+/.test(lines[i])) {
+        html += `<li>${inline(lines[i].replace(/^\s*-\s+/, ""))}</li>`;
+        i++;
+      }
+      html += "</ul>";
+      continue;
+    }
+
+    // Blank line -> paragraph break; otherwise accumulate into one paragraph.
+    if (line.trim() === "") {
+      i++;
+      continue;
+    }
+    let para = line;
+    i++;
+    while (i < lines.length && lines[i].trim() !== "" && !/^\s*-\s+/.test(lines[i]) && !lines[i].includes("|")) {
+      para += "\n" + lines[i];
+      i++;
+    }
+    html += `<p>${inline(para).replace(/\n/g, "<br>")}</p>`;
+  }
+  return html;
+}
+
+function addMessage(role, text) {
+  const msg = document.createElement("div");
+  msg.className = "msg " + role;
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  if (role === "agent") {
+    bubble.innerHTML = renderMarkdown(text);
+  } else {
+    bubble.textContent = text;
+  }
+  msg.appendChild(bubble);
+  thread.appendChild(msg);
+  thread.scrollTop = thread.scrollHeight;
+  return msg;
+}
+
+async function sendMessage(text) {
+  text = text.trim();
+  if (!text) return;
+  $("#input").value = "";
+  addMessage("user", text);
+  const pending = addMessage("pending", "Cartwheel is thinking…");
+  $("#send-btn").disabled = true;
+
+  try {
+    const resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: currentRole, message: text }),
+    });
+    const data = await resp.json();
+    pending.remove();
+    if (data.error) {
+      addMessage("system", "Error: " + data.error);
+    } else {
+      addMessage("agent", data.reply);
+    }
+  } catch (err) {
+    pending.remove();
+    addMessage("system", "Request failed: " + err);
+  } finally {
+    $("#send-btn").disabled = false;
+  }
+}
+
+async function resetConversation() {
+  await fetch("/api/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role: currentRole }),
+  });
+  thread.innerHTML = "";
+  addMessage("system", `New conversation started as ${currentRole} (${ROLE_LABELS[currentRole]}).`);
+}
+
+function switchRole(role) {
+  currentRole = role;
+  document.querySelectorAll(".role-switch button").forEach((b) => {
+    b.classList.toggle("active", b.dataset.role === role);
+  });
+  renderRoleMeta();
+  renderSuggestions();
+  thread.innerHTML = "";
+  addMessage("system", `Switched to ${role} (${ROLE_LABELS[role]}). Conversation history is kept per role.`);
+}
+
+document.querySelectorAll(".role-switch button").forEach((b) => {
+  b.onclick = () => switchRole(b.dataset.role);
+});
+$("#reset-btn").onclick = resetConversation;
+$("#send-btn").onclick = () => sendMessage($("#input").value);
+$("#input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendMessage($("#input").value);
+});
+
+function money(n) { return "$" + Number(n).toFixed(2); }
+
+function orderCard(o) {
+  const badgeClass = o.status === "delivered" ? "delivered" : (o.status === "cancelled" || o.status === "refunded" ? o.status : "");
+  return `
+    <div class="data-card">
+      <div class="row1">#${o.order_id} <span class="badge ${badgeClass}">${o.status}</span></div>
+      <div class="row2">${escapeHtml(o.product || "")} · ${o.store || ""}</div>
+      <div class="row2">${money(o.total_usd)} · delivered ${o.delivered_at || "—"}</div>
+      <div class="row2">refund eligible: ${o.refund_eligible ? "yes" : "no"}</div>
+    </div>
+  `;
+}
+
+async function loadSampleData() {
+  const resp = await fetch("/api/sample-data");
+  const data = await resp.json();
+  const sidebar = $("#sidebar");
+  sidebar.innerHTML = `
+    <h2>Shopper (user ${data.shopper.user_id}) — orders</h2>
+    ${data.shopper.orders.map(orderCard).join("")}
+
+    <h2>Merchant (user ${data.merchant.user_id}) — ${escapeHtml(data.merchant.store?.name || "store")}</h2>
+    <div class="note">Return window override: ${data.merchant.store?.return_window_days_override ?? "none"} days</div>
+    ${data.merchant.products.map(p => `
+      <div class="data-card">
+        <div class="row1">${escapeHtml(p.title)}</div>
+        <div class="row2">product #${p.product_id} · ${money(p.price_usd)}</div>
+      </div>`).join("")}
+    <h2>Merchant's store orders</h2>
+    ${data.merchant.orders.map(orderCard).join("")}
+
+    <h2>Support (user ${data.support.user_id})</h2>
+    <div class="note">${escapeHtml(data.support.note)}</div>
+    ${data.support.example_orders.map(orderCard).join("")}
+  `;
+}
+
+renderRoleMeta();
+renderSuggestions();
+loadSampleData();
+</script>
+</body>
+</html>

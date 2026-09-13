@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cartwheel-playground",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "source $HOME/.local/bin/env && uv run uvicorn playground.server:app --port 8020"
+      ],
+      "port": 8020
+    }
+  ]
+}
