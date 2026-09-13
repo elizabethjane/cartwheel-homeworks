@@ -17,3 +17,6 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+
+# Local tutorial progress note (not a submission file)
+hw1-progress.md
