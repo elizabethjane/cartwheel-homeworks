@@ -70,11 +70,14 @@ services:
     restart: always
     depends_on: *langfuse-depends-on
     ports:
-      - "3000:3000"
+      # Remapped from the default 3000 -> 3001 on this machine: port 3000
+      # was already in use by an unrelated project's dev server. Container
+      # still listens on 3000 internally; only the host-side port changed.
+      - "3001:3000"
     environment:
       <<: *langfuse-shared-env
       # NEXTAUTH_URL must match the URL you open in the browser.
-      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_URL: http://localhost:3001
       NEXTAUTH_SECRET: cartwheel-dev-nextauth-secret
       # Pre-provision the org, project, API keys, and login on first boot.
       # The keys match .env.example.
@@ -139,7 +142,10 @@ services:
     # MinIO does not publish major-version tags; the official Langfuse
     # compose also tracks latest. Pin a RELEASE.* tag here if you need
     # stricter reproducibility.
-    image: minio/minio:latest
+    # Pulled from quay.io, not Docker Hub: minio/minio on Docker Hub now
+    # requires `docker login` (gated as of 2025); quay.io/minio/minio is
+    # MinIO's own registry and stays freely pullable. Same image otherwise.
+    image: quay.io/minio/minio:latest
     restart: always
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
