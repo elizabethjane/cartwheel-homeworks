@@ -176,7 +176,7 @@
   </div>
   <span class="role-meta" id="role-meta"></span>
   <div class="spacer"></div>
-  <button id="reset-btn">↺ New conversation</button>
+  <button id="reset-btn">↺ Clear chat</button>
 </header>
 
 <div class="layout">
@@ -191,7 +191,7 @@
     </div>
 
     <div class="thread" id="thread">
-      <div class="msg system"><div class="bubble">Pick a role, try a suggested prompt, or type your own message below.</div></div>
+      <div class="msg system"><div class="bubble">Pick a role, try a suggested prompt, or type your own message below. Each message is independent — nothing is remembered between them, so every test starts fresh.</div></div>
     </div>
 
     <div class="composer">
@@ -367,14 +367,11 @@ async function sendMessage(text) {
   }
 }
 
-async function resetConversation() {
-  await fetch("/api/reset", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role: currentRole }),
-  });
+function clearChat() {
+  // Purely visual -- every message is already its own independent,
+  // stateless request (no server-side session to clear).
   thread.innerHTML = "";
-  addMessage("system", `New conversation started as ${currentRole} (${ROLE_LABELS[currentRole]}).`);
+  addMessage("system", `Chat cleared. Each message is a fresh, independent test -- nothing is remembered between them.`);
 }
 
 function switchRole(role) {
@@ -385,13 +382,13 @@ function switchRole(role) {
   renderRoleMeta();
   renderSuggestions();
   thread.innerHTML = "";
-  addMessage("system", `Switched to ${role} (${ROLE_LABELS[role]}). Conversation history is kept per role.`);
+  addMessage("system", `Switched to ${role} (${ROLE_LABELS[role]}). Each message is independent -- nothing is remembered between them.`);
 }
 
 document.querySelectorAll(".role-switch button").forEach((b) => {
   b.onclick = () => switchRole(b.dataset.role);
 });
-$("#reset-btn").onclick = resetConversation;
+$("#reset-btn").onclick = clearChat;
 $("#send-btn").onclick = () => sendMessage($("#input").value);
 $("#input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendMessage($("#input").value);

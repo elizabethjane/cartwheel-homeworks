@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from agents import Runner, SQLiteSession
+from agents import Runner
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -21,7 +21,6 @@ from pydantic import BaseModel
 from agent import db
 from agent.agent import build_agent
 from agent.auth import AuthContext
-from agent.config import REPO_ROOT
 from observability.instrument import load_env
 
 load_env()
@@ -29,7 +28,6 @@ load_env()
 app = FastAPI(title="Cartwheel prompt playground")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-SESSIONS_DB = REPO_ROOT / ".playground-sessions.db"
 
 # Matches the exact demo identities used throughout HW1/HW2 testing.
 ROLE_USERS = {
@@ -37,16 +35,6 @@ ROLE_USERS = {
     "merchant": {"user_id": 9002, "store_id": 2},
     "support": {"user_id": 9501, "store_id": None},
 }
-
-# One running conversation per role, so multi-turn requests (e.g. "why?"
-# follow-ups, or a refund tool asking for a reason) work naturally.
-_sessions: dict[str, SQLiteSession] = {}
-
-
-def _session_for(role: str) -> SQLiteSession:
-    if role not in _sessions:
-        _sessions[role] = SQLiteSession(f"playground-{role}", str(SESSIONS_DB))
-    return _sessions[role]
 
 
 @app.get("/")
@@ -57,30 +45,33 @@ def index() -> FileResponse:
 class ChatIn(BaseModel):
     role: str
     message: str
-    reset: bool = False
 
 
 @app.post("/api/chat")
 async def chat(body: ChatIn) -> dict[str, Any]:
+    """Every call is a fresh, single-turn conversation -- no session, no
+    history. This is deliberate: the playground's job is to let each prompt
+    (suggested or free-text) be judged as an isolated test case, the same
+    way HW1 Part B always started a fresh CLI session per conversation.
+    A prior design kept one running SQLiteSession per role so follow-up
+    turns (e.g. a refund tool asking for a reason) worked naturally, but
+    that meant unrelated later tests could see stale context from much
+    earlier ones -- e.g. asking about order 4127 as a merchant could answer
+    "as I mentioned earlier" from a denial several tests ago. Statelessness
+    trades that away: a genuine multi-turn flow (ask for a refund, then
+    reply with just the reason) won't be remembered across two messages
+    anymore -- put the whole request in one message instead (the suggested
+    prompts already do this, e.g. "I'd like a refund for order 4455, I
+    changed my mind")."""
     if body.role not in ROLE_USERS:
         return {"error": f"unknown role: {body.role!r}"}
-
-    if body.reset:
-        _sessions.pop(body.role, None)
 
     user = ROLE_USERS[body.role]
     ctx = AuthContext(user_id=user["user_id"], role=body.role, store_id=user["store_id"])
     agent = build_agent(ctx)
-    session = _session_for(body.role)
 
-    result = await Runner.run(agent, body.message, session=session, context=ctx, max_turns=12)
+    result = await Runner.run(agent, body.message, context=ctx, max_turns=12)
     return {"reply": result.final_output}
-
-
-@app.post("/api/reset")
-def reset(body: dict[str, str]) -> dict[str, Any]:
-    _sessions.pop(body.get("role", ""), None)
-    return {"ok": True}
 
 
 def _order_brief(conn: Any, order_id: int) -> dict[str, Any] | None:
