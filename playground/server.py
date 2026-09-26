@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from agent import db
+from agent import tools as hw_tools
 from agent.agent import build_agent
 from agent.auth import AuthContext
 from observability.instrument import load_env
@@ -37,6 +38,12 @@ ROLE_USERS = {
     "merchant": {"user_id": 9002, "store_id": 2},
     "support": {"user_id": 9501, "store_id": None},
 }
+
+# Support can view any order, so this is used purely to reuse
+# check_return_eligibility's policy/window computation for the sample-data
+# sidebar -- it's reference info shown regardless of which role is
+# currently selected, not a claim about what that role itself can see.
+_SUPPORT_CTX = AuthContext(user_id=9501, role="support")
 
 
 @app.get("/")
@@ -123,6 +130,13 @@ def _order_brief(conn: Any, order_id: int) -> dict[str, Any] | None:
         if product.id == order.product_id:
             product_title = product.title
             break
+
+    # Reuse the agent's own eligibility tool so the sidebar always agrees
+    # with what the agent would actually say -- including *why*: which
+    # policy applies (store override vs. the cw-returns platform default)
+    # and the exact window/deadline, not just a bare eligible yes/no.
+    eligibility = hw_tools.check_return_eligibility(_SUPPORT_CTX, order_id)
+
     return {
         "order_id": order.id,
         "store": store.name if store else None,
@@ -131,6 +145,10 @@ def _order_brief(conn: Any, order_id: int) -> dict[str, Any] | None:
         "total_usd": order.total_usd,
         "delivered_at": order.delivered_at.isoformat() if order.delivered_at else None,
         "refund_eligible": order.refund_eligible,
+        "policy_id": eligibility.get("policy_id"),
+        "return_window_days": eligibility.get("return_window_days"),
+        "return_deadline": eligibility.get("deadline"),
+        "eligibility_reason": eligibility.get("reason"),
     }
 
 

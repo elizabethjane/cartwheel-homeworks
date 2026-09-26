@@ -471,12 +471,20 @@ function money(n) { return "$" + Number(n).toFixed(2); }
 
 function orderCard(o) {
   const badgeClass = o.status === "delivered" ? "delivered" : (o.status === "cancelled" || o.status === "refunded" ? o.status : "");
+  const eligibleColor = o.refund_eligible ? "var(--green)" : "var(--red)";
+  const policyLine = o.policy_id
+    ? `<div class="row2">policy: <span style="font-family:ui-monospace,monospace;">${escapeHtml(o.policy_id)}</span> (${o.return_window_days}-day window)</div>`
+    : "";
+  const eligibleLine = o.return_deadline
+    ? `<div class="row2" style="color:${eligibleColor};font-weight:600;">${o.refund_eligible ? "✓ eligible" : "✕ not eligible"} — deadline ${o.return_deadline}</div>`
+    : `<div class="row2">refund eligible: ${o.refund_eligible ? "yes" : "no"}</div>`;
   return `
     <div class="data-card">
       <div class="row1">#${o.order_id} <span class="badge ${badgeClass}">${o.status}</span></div>
       <div class="row2">${escapeHtml(o.product || "")} · ${o.store || ""}</div>
       <div class="row2">${money(o.total_usd)} · delivered ${o.delivered_at || "—"}</div>
-      <div class="row2">refund eligible: ${o.refund_eligible ? "yes" : "no"}</div>
+      ${policyLine}
+      ${eligibleLine}
     </div>
   `;
 }
