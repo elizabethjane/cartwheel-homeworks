@@ -10,6 +10,8 @@ Run with:
 
 from __future__ import annotations
 
+import ast
+import json
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +41,13 @@ ROLE_USERS = {
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    # No caching: this is a dev tool edited frequently, and a stale cached
+    # copy of the page (browser or embedded preview pane) has repeatedly
+    # masked real edits during development.
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 
 class ChatIn(BaseModel):
@@ -71,7 +79,38 @@ async def chat(body: ChatIn) -> dict[str, Any]:
     agent = build_agent(ctx)
 
     result = await Runner.run(agent, body.message, context=ctx, max_turns=12)
-    return {"reply": result.final_output}
+    return {"reply": result.final_output, "tool_calls": _extract_tool_calls(result.new_items)}
+
+
+def _extract_tool_calls(new_items: list[Any]) -> list[dict[str, Any]]:
+    """Same extraction agent/cli.py's --debug flag does (see _print_tool_calls),
+    but building a JSON-serializable list instead of printing to stdout."""
+    outputs = {
+        item.call_id: item.output
+        for item in new_items
+        if item.type == "tool_call_output_item" and item.call_id is not None
+    }
+    calls = []
+    for item in new_items:
+        if item.type != "tool_call_item":
+            continue
+        raw = item.raw_item
+        args = raw.get("arguments") if isinstance(raw, dict) else getattr(raw, "arguments", None)
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                pass
+        result_value = outputs.get(item.call_id)
+        if isinstance(result_value, str):
+            try:
+                # Tool functions return Python dicts; the SDK stores their
+                # repr() as a string (single-quoted, not valid JSON).
+                result_value = ast.literal_eval(result_value)
+            except (ValueError, SyntaxError):
+                pass  # leave as the raw string
+        calls.append({"name": item.tool_name, "arguments": args, "result": result_value})
+    return calls
 
 
 def _order_brief(conn: Any, order_id: int) -> dict[str, Any] | None:

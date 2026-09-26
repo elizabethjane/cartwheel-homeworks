@@ -94,6 +94,36 @@
   .badge.cancelled, .badge.refunded { background: var(--red-bg); color: var(--red); }
   .note { font-size: 12px; color: var(--text-dim); font-style: italic; margin-bottom: 8px; }
 
+  /* Right-hand tool-call panel */
+  #tool-panel { border-right: none; border-left: 1px solid var(--border); }
+  .turn-card {
+    border: 1px solid var(--border); border-radius: 8px;
+    margin-bottom: 10px; overflow: hidden; background: var(--bg);
+  }
+  .turn-card .turn-request {
+    padding: 8px 10px; font-size: 12px; font-weight: 700;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .turn-card .no-calls {
+    padding: 8px 10px; font-size: 12px; color: var(--text-dim); font-style: italic;
+  }
+  .tool-call { border-top: 1px solid var(--border); padding: 8px 10px; }
+  .tool-call .tool-name {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; font-weight: 700; color: var(--text);
+    margin-bottom: 4px;
+  }
+  .tool-call .tool-label {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-dim); margin: 6px 0 2px;
+  }
+  .tool-call pre {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; line-height: 1.4; margin: 0;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 8px; max-height: 160px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  }
+
   /* Main column */
   main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
@@ -199,6 +229,12 @@
       <button id="send-btn">Send</button>
     </div>
   </main>
+
+  <aside id="tool-panel">
+    <h2>Tool calls</h2>
+    <div class="note">Shows the name, arguments, and result of every tool call the agent makes — same info as the CLI's --debug flag.</div>
+    <div id="tool-log"></div>
+  </aside>
 </div>
 
 <script>
@@ -338,6 +374,40 @@ function addMessage(role, text) {
   return msg;
 }
 
+function renderToolCalls(requestText, toolCalls) {
+  const log = $("#tool-log");
+  const card = document.createElement("div");
+  card.className = "turn-card";
+  const header = document.createElement("div");
+  header.className = "turn-request";
+  header.textContent = requestText;
+  card.appendChild(header);
+
+  if (!toolCalls || toolCalls.length === 0) {
+    const none = document.createElement("div");
+    none.className = "no-calls";
+    none.textContent = "No tools called — the agent answered from the conversation alone.";
+    card.appendChild(none);
+  } else {
+    for (const call of toolCalls) {
+      const div = document.createElement("div");
+      div.className = "tool-call";
+      const argsStr = JSON.stringify(call.arguments, null, 2);
+      const resultStr = JSON.stringify(call.result, null, 2);
+      div.innerHTML = `
+        <div class="tool-name">🔧 ${escapeHtml(call.name)}</div>
+        <div class="tool-label">Arguments</div>
+        <pre>${escapeHtml(argsStr)}</pre>
+        <div class="tool-label">Result</div>
+        <pre>${escapeHtml(resultStr)}</pre>
+      `;
+      card.appendChild(div);
+    }
+  }
+  log.appendChild(card);
+  log.scrollTop = log.scrollHeight;
+}
+
 async function sendMessage(text) {
   text = text.trim();
   if (!text) return;
@@ -358,6 +428,7 @@ async function sendMessage(text) {
       addMessage("system", "Error: " + data.error);
     } else {
       addMessage("agent", data.reply);
+      renderToolCalls(text, data.tool_calls);
     }
   } catch (err) {
     pending.remove();
@@ -371,6 +442,7 @@ function clearChat() {
   // Purely visual -- every message is already its own independent,
   // stateless request (no server-side session to clear).
   thread.innerHTML = "";
+  $("#tool-log").innerHTML = "";
   addMessage("system", `Chat cleared. Each message is a fresh, independent test -- nothing is remembered between them.`);
 }
 
@@ -382,6 +454,7 @@ function switchRole(role) {
   renderRoleMeta();
   renderSuggestions();
   thread.innerHTML = "";
+  $("#tool-log").innerHTML = "";
   addMessage("system", `Switched to ${role} (${ROLE_LABELS[role]}). Each message is independent -- nothing is remembered between them.`);
 }
 
