@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cartwheel Trace Viewer</title>
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --panel: #ffffff;
+    --border: #e4e1da;
+    --text: #24211c;
+    --text-dim: #6b6558;
+    --accent: #2b5b8c;
+    --accent-soft: #dce9f5;
+    --green: #2f7a3d;
+    --green-bg: #e9f5ea;
+    --red: #b3341c;
+    --red-bg: #fbeae5;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow-x: hidden;
+  }
+  body { display: flex; flex-direction: column; }
+
+  header {
+    padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+  }
+  header h1 { font-size: 15px; margin: 0; }
+  header .sub { font-size: 12px; color: var(--text-dim); }
+  #refresh-btn {
+    margin-left: auto; border: 1px solid var(--border); background: var(--panel);
+    padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; color: var(--text-dim);
+  }
+
+  .layout { display: flex; flex: 1; min-height: 0; }
+
+  /* Trace list */
+  #trace-list {
+    width: 340px; flex-shrink: 0; overflow-y: auto;
+    border-right: 1px solid var(--border); background: var(--panel);
+  }
+  .trace-row {
+    padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 12.5px;
+  }
+  .trace-row:hover { background: var(--bg); }
+  .trace-row.active { background: var(--accent-soft); }
+  .trace-row .row1 { display: flex; justify-content: space-between; font-weight: 700; }
+  .trace-row .role-tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); }
+  .trace-row .ts { color: var(--text-dim); font-weight: 400; }
+  .trace-row .preview { color: var(--text-dim); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .trace-row .meta-line { margin-top: 3px; color: var(--text-dim); font-size: 11px; }
+
+  /* Detail pane */
+  #detail { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  #detail-empty { padding: 40px; color: var(--text-dim); font-size: 13px; }
+  #detail-header {
+    padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--panel); flex-shrink: 0;
+  }
+  #detail-header .trace-id { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+  #detail-header .badges { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--bg);
+    border: 1px solid var(--border); color: var(--text-dim);
+  }
+  .badge.err { background: var(--red-bg); color: var(--red); border-color: transparent; }
+
+  .tabs { display: flex; gap: 4px; padding: 0 20px; border-bottom: 1px solid var(--border); background: var(--panel); flex-shrink: 0; }
+  .tab-btn {
+    border: none; background: none; padding: 10px 12px; font-size: 12.5px; font-weight: 600;
+    color: var(--text-dim); cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .tab-content { flex: 1; overflow-y: auto; padding: 16px 20px; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* Conversation view */
+  .turn { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
+  .turn-head {
+    padding: 6px 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .turn-head.system { background: #f0eee8; color: var(--text-dim); }
+  .turn-head.user { background: var(--accent-soft); color: var(--accent); }
+  .turn-head.assistant { background: #eef4ee; color: var(--green); }
+  .turn-head.tool { background: #f5f0e8; color: #8a6d1f; }
+  .turn-body { padding: 10px; font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
+  .part-toolcall {
+    margin-top: 8px; padding: 8px; background: var(--bg); border-radius: 6px; font-family: var(--mono); font-size: 11.5px;
+  }
+  .part-toolcall .id { color: var(--text-dim); }
+
+  /* Tool calls view */
+  .tool-card { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+  .tool-card.failed { border-color: var(--red); }
+  .tool-card-head {
+    padding: 8px 12px; background: var(--bg); display: flex; justify-content: space-between; align-items: center;
+    cursor: pointer;
+  }
+  .tool-card-head .name { font-family: var(--mono); font-weight: 700; font-size: 13px; }
+  .tool-card-head .timing { font-size: 11px; color: var(--text-dim); }
+  .tool-card-body { padding: 10px 12px; display: none; }
+  .tool-card-body.open { display: block; }
+  .tool-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 8px 0 3px; }
+  .tool-label:first-child { margin-top: 0; }
+  pre.code-block {
+    font-family: var(--mono); font-size: 12px; line-height: 1.5; margin: 0;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  }
+  .tool-card.failed pre.code-block.result { background: var(--red-bg); border-color: var(--red); }
+  .attr-row { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
+  .attr-row .flag-true { color: var(--red); font-weight: 700; }
+  .attr-row .flag-false { color: var(--green); }
+
+  /* Raw view */
+  .raw-section { margin-bottom: 16px; }
+  .raw-section h3 { font-size: 12px; text-transform: uppercase; color: var(--text-dim); margin: 0 0 6px; }
+
+  .missing { color: var(--text-dim); font-style: italic; }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #d8d4cb; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔎 Cartwheel Trace Viewer</h1>
+  <span class="sub">Read-only — reads live from Langfuse on localhost. No annotation, nothing stored here.</span>
+  <button id="refresh-btn">↺ Refresh list</button>
+</header>
+
+<div class="layout">
+  <div id="trace-list"><div class="trace-row">Loading traces…</div></div>
+
+  <div id="detail">
+    <div id="detail-empty">Select a trace on the left.</div>
+  </div>
+</div>
+
+<script>
+const $ = (sel, root) => (root || document).querySelector(sel);
+const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : String(str);
+  return div.innerHTML;
+}
+
+function fmtJson(v) {
+  if (v === undefined) return '<span class="missing">undefined (not recorded)</span>';
+  if (v === null) return '<span class="missing">null</span>';
+  return escapeHtml(JSON.stringify(v, null, 2));
+}
+
+function fmtTime(iso) {
+  if (!iso) return '<span class="missing">no timestamp</span>';
+  return new Date(iso).toLocaleString();
+}
+
+function firstText(messages) {
+  if (!messages || !messages.length) return null;
+  const msg = Array.isArray(messages) ? messages[0] : messages;
+  const part = (msg.parts || []).find(p => p.type === "text");
+  return part ? part.content : null;
+}
+
+let activeTraceId = null;
+
+async function loadTraces() {
+  const resp = await fetch("/api/traces?limit=50");
+  const data = await resp.json();
+  const list = $("#trace-list");
+  if (!data.data || !data.data.length) {
+    list.innerHTML = '<div class="trace-row">No traces found in Langfuse yet.</div>';
+    return;
+  }
+  list.innerHTML = data.data.map(t => {
+    const attrs = (t.metadata && t.metadata.attributes) || {};
+    const role = attrs["cartwheel.user_role"] || "?";
+    const userId = attrs["cartwheel.user_id"] || "?";
+    const req = firstText(t.input) || '<span class="missing">no input recorded</span>';
+    const latency = t.latency != null ? t.latency.toFixed(2) + "s" : '<span class="missing">—</span>';
+    return `
+      <div class="trace-row" data-id="${escapeHtml(t.id)}">
+        <div class="row1"><span class="role-tag">${escapeHtml(role)} · user ${escapeHtml(userId)}</span> <span class="ts">${escapeHtml(new Date(t.timestamp).toLocaleTimeString())}</span></div>
+        <div class="preview">${typeof req === "string" ? escapeHtml(req) : req}</div>
+        <div class="meta-line">latency ${latency} · id ${escapeHtml(t.id.slice(0, 12))}…</div>
+      </div>`;
+  }).join("");
+  $$(".trace-row[data-id]", list).forEach(row => {
+    row.onclick = () => selectTrace(row.dataset.id);
+  });
+}
+
+function renderConversation(conversation) {
+  if (!conversation || !conversation.length) {
+    return '<p class="missing">No conversation recorded for this trace.</p>';
+  }
+  return conversation.map(msg => {
+    const role = msg.role || "unknown";
+    let body = "";
+    for (const part of msg.parts || []) {
+      if (part.type === "text") {
+        body += escapeHtml(part.content ?? "");
+      } else if (part.type === "tool_call") {
+        body += `<div class="part-toolcall">🔧 <strong>${escapeHtml(part.name)}</strong>(${escapeHtml(JSON.stringify(part.arguments))})<br><span class="id">call id: ${escapeHtml(part.id || "missing")}</span></div>`;
+      } else if (part.type === "tool_call_response") {
+        body += `<div class="part-toolcall">↩ response for call id: <span class="id">${escapeHtml(part.id || "missing")}</span><br>${escapeHtml(part.response ?? "")}</div>`;
+      } else {
+        body += `<div class="part-toolcall">(unrecognized part type: ${escapeHtml(part.type)})<br>${fmtJson(part)}</div>`;
+      }
+    }
+    return `<div class="turn"><div class="turn-head ${escapeHtml(role)}">${escapeHtml(role)}</div><div class="turn-body">${body || '<span class="missing">empty</span>'}</div></div>`;
+  }).join("");
+}
+
+function renderToolCalls(toolCalls) {
+  if (!toolCalls || !toolCalls.length) {
+    return '<p class="missing">No tool calls in this trace.</p>';
+  }
+  return toolCalls.map((obs, i) => {
+    const failed = obs.output && obs.output.ok === false;
+    const attrs = (obs.metadata && obs.metadata.attributes) || {};
+    const permDenied = attrs["cartwheel.permission_denied"];
+    const latency = obs.latency != null ? (obs.latency * 1000).toFixed(0) + "ms" : "—";
+    const attrRows = Object.entries(attrs)
+      .filter(([k]) => k.startsWith("cartwheel."))
+      .map(([k, v]) => {
+        const cls = v === "true" ? "flag-true" : (v === "false" ? "flag-false" : "");
+        return `<div class="attr-row">${escapeHtml(k)}: <span class="${cls}">${escapeHtml(v)}</span></div>`;
+      }).join("");
+    return `
+      <div class="tool-card ${failed ? "failed" : ""}">
+        <div class="tool-card-head" onclick="this.nextElementSibling.classList.toggle('open')">
+          <span class="name">🔧 ${escapeHtml(obs.name)}${failed ? " — FAILED" : ""}</span>
+          <span class="timing">${latency} · obs id ${escapeHtml((obs.id || "").slice(0, 10))}…</span>
+        </div>
+        <div class="tool-card-body ${i === 0 ? "open" : ""}">
+          <div class="tool-label">Started / Ended</div>
+          <div>${fmtTime(obs.startTime)} → ${fmtTime(obs.endTime)}</div>
+          <div class="tool-label">Arguments</div>
+          <pre class="code-block">${fmtJson(obs.input)}</pre>
+          <div class="tool-label">Result</div>
+          <pre class="code-block result">${fmtJson(obs.output)}</pre>
+          <div class="tool-label">Attributes</div>
+          ${attrRows || '<div class="attr-row missing">none recorded</div>'}
+          <div class="tool-label">Status</div>
+          <div class="attr-row">level: ${escapeHtml(obs.level)} ${obs.statusMessage ? "— " + escapeHtml(obs.statusMessage) : ""}</div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function renderRaw(data) {
+  return `
+    <div class="raw-section">
+      <h3>Raw trace object</h3>
+      <pre class="code-block">${fmtJson(data.trace)}</pre>
+    </div>
+    <div class="raw-section">
+      <h3>Raw observations (${data.observations.length})</h3>
+      <pre class="code-block">${fmtJson(data.observations)}</pre>
+    </div>
+  `;
+}
+
+async function selectTrace(traceId) {
+  activeTraceId = traceId;
+  $$(".trace-row").forEach(r => r.classList.toggle("active", r.dataset.id === traceId));
+
+  const detail = $("#detail");
+  detail.innerHTML = '<div id="detail-empty">Loading trace…</div>';
+
+  const resp = await fetch(`/api/traces/${traceId}`);
+  if (!resp.ok) {
+    detail.innerHTML = `<div id="detail-empty">Failed to load trace: ${resp.status}</div>`;
+    return;
+  }
+  const data = await resp.json();
+  const t = data.trace;
+  const attrs = (t.metadata && t.metadata.attributes) || {};
+  const errorObs = data.observations.filter(o => o.level && o.level !== "DEFAULT");
+  const failedTools = data.tool_calls.filter(o => o.output && o.output.ok === false);
+
+  detail.innerHTML = `
+    <div id="detail-header">
+      <div class="trace-id">${escapeHtml(t.id)}</div>
+      <div class="badges">
+        <span class="badge">${escapeHtml(attrs["cartwheel.user_role"] || "role: —")}</span>
+        <span class="badge">user ${escapeHtml(attrs["cartwheel.user_id"] || "—")}</span>
+        <span class="badge">prompt_version ${escapeHtml(attrs["cartwheel.prompt_version"] || "—")}</span>
+        <span class="badge">${escapeHtml(t.timestamp ? new Date(t.timestamp).toLocaleString() : "no timestamp")}</span>
+        <span class="badge">latency ${t.latency != null ? t.latency.toFixed(2) + "s" : "—"}</span>
+        <span class="badge">cost ${t.totalCost != null ? "$" + t.totalCost.toFixed(4) : "—"}</span>
+        <span class="badge">${data.observations.length} observations</span>
+        ${errorObs.length ? `<span class="badge err">${errorObs.length} non-default level observation(s)</span>` : ""}
+        ${failedTools.length ? `<span class="badge err">${failedTools.length} failed tool call(s)</span>` : ""}
+      </div>
+    </div>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="conversation">Conversation</button>
+      <button class="tab-btn" data-tab="tools">Tool Calls (${data.tool_calls.length})</button>
+      <button class="tab-btn" data-tab="raw">Raw</button>
+    </div>
+    <div class="tab-content">
+      <div class="tab-panel active" data-panel="conversation">${renderConversation(data.conversation)}</div>
+      <div class="tab-panel" data-panel="tools">${renderToolCalls(data.tool_calls)}</div>
+      <div class="tab-panel" data-panel="raw">${renderRaw(data)}</div>
+    </div>
+  `;
+
+  $$(".tab-btn", detail).forEach(btn => {
+    btn.onclick = () => {
+      $$(".tab-btn", detail).forEach(b => b.classList.toggle("active", b === btn));
+      $$(".tab-panel", detail).forEach(p => p.classList.toggle("active", p.dataset.panel === btn.dataset.tab));
+    };
+  });
+}
+
+$("#refresh-btn").onclick = loadTraces;
+loadTraces();
+</script>
+</body>
+</html>

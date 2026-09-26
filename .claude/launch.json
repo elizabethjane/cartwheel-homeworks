@@ -9,6 +9,15 @@
         "source $HOME/.local/bin/env && uv run uvicorn playground.server:app --port 8020"
       ],
       "port": 8020
+    },
+    {
+      "name": "cartwheel-trace-viewer",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "source $HOME/.local/bin/env && uv run uvicorn trace_viewer.server:app --port 8030"
+      ],
+      "port": 8030
     }
   ]
 }
