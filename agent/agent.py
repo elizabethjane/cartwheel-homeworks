@@ -28,7 +28,7 @@ from agent.auth import AuthContext, can_refund_order, can_view_order, permission
 from agent.config import load_facts
 from agent.helpcenter import get_index
 from agent.killswitch import kill_switch
-from observability.instrument import record_tool_result
+from observability.instrument import configure_model_tracing, record_tool_result
 from seed.eligibility import refund_needs_approval
 
 # ---------------------------------------------------------------------------
@@ -55,6 +55,11 @@ from seed.eligibility import refund_needs_approval
 # agent answered correctly but without a cancel_order call; the added Tool
 # guidance line below closes that gap by extending the same verification
 # principle to cancellation.
+#
+# HW3 sync: adopted the instructor's "explain your reasoning before every
+# tool call" line from upstream's revised starter -- Homework 3's scenario
+# runs are read from Langfuse traces, and an unexplained tool call is much
+# harder to grade/analyze than one the model narrates first.
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT_TEMPLATE = """\
@@ -74,6 +79,9 @@ or credential changes, and anything outside Cartwheel.
 ## Tool guidance
 - Prefer a tool lookup over memory. Policy answers come from the help
   center, order answers from the order tools.
+- You MUST explain your reasoning in plain text before every tool call.
+  State what you are about to look up and why, in one sentence. Do not
+  call a tool without explaining first.
 - Cite the policy id (for example cw-returns) for every policy claim.
 - Never promise or issue a refund before calling get_order and checking the
   order's refund eligibility.
@@ -104,9 +112,16 @@ def render_system_prompt(ctx: AuthContext, template: str | None = None) -> str:
     )
 
 
-def prompt_version(rendered_prompt: str) -> str:
-    """Hash of the rendered prompt. Stamped on every trace (Lecture 2.2)."""
-    return hashlib.sha256(rendered_prompt.encode()).hexdigest()[:12]
+def prompt_version(template: str | None = None) -> str:
+    """Hash the system prompt template before injecting user context.
+
+    HW3 sync: previously hashed the fully-rendered prompt (role/user_id/
+    store_id already filled in), so a shopper and a merchant got different
+    hashes for an identical template -- pure noise for comparing prompt
+    versions across traces. Hashing the template itself makes the hash
+    reflect only genuine prompt changes, independent of who's asking.
+    """
+    return hashlib.sha256((template or SYSTEM_PROMPT_TEMPLATE).encode()).hexdigest()[:12]
 
 
 # ---------------------------------------------------------------------------
@@ -150,9 +165,20 @@ def model_settings_for(model: Any) -> ModelSettings:
     documents is passing `allowed_openai_params=["tools"]` per request; the
     Agents SDK forwards it through ModelSettings.extra_args.
     """
+    if isinstance(model, str) and model.startswith("gpt-"):
+        return ModelSettings(
+            reasoning={"effort": "high", "summary": "detailed"},
+            verbosity="high",
+            include_usage=True,
+        )
     model_id = getattr(model, "model", "") if not isinstance(model, str) else ""
     if model_id.startswith("together_ai/"):
         return ModelSettings(extra_args={"allowed_openai_params": ["tools"]})
+    if "claude" in model_id or "anthropic" in model_id:
+        return ModelSettings(
+            reasoning={"effort": "high", "summary": "detailed"},
+            include_usage=True,
+        )
     return ModelSettings()
 
 
@@ -515,6 +541,7 @@ def build_agent(
     it, never a replacement for it.
     """
     resolved = resolve_model(model)
+    configure_model_tracing(openai_model=isinstance(resolved, str))
     if not defenses:
         return Agent[AuthContext](
             name="cartwheel-support",

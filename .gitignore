@@ -12,6 +12,7 @@ data/cartwheel.db
 .playground-sessions.db*
 scenarios/results/
 replay/results/
+scenarios/demo_pilot_gt.json
 
 # Python
 __pycache__/
