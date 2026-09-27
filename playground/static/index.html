@@ -184,6 +184,7 @@
     border: 1px solid var(--border); font-size: 14px; background: var(--bg); color: var(--text);
   }
   .composer input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .composer input#scenario-id { flex: 0 0 200px; font-family: monospace; font-size: 12px; }
   .composer button {
     padding: 10px 14px; border-radius: 10px; border: none;
     background: var(--accent); color: #fff; font-weight: 700; font-size: 13px;
@@ -225,6 +226,7 @@
     </div>
 
     <div class="composer">
+      <input id="scenario-id" type="text" placeholder="scenario_id (optional, HW3)" autocomplete="off" />
       <input id="input" type="text" placeholder="Type a message…" autocomplete="off" />
       <button id="send-btn">Send</button>
     </div>
@@ -416,11 +418,17 @@ async function sendMessage(text) {
   const pending = addMessage("pending", "Cartwheel is thinking…");
   $("#send-btn").disabled = true;
 
+  const scenarioId = $("#scenario-id").value.trim();
+
   try {
     const resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ role: currentRole, message: text }),
+      body: JSON.stringify({
+        role: currentRole,
+        message: text,
+        scenario_id: scenarioId || null,
+      }),
     });
     const data = await resp.json();
     pending.remove();

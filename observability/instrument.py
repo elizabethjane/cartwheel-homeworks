@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +29,37 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 log = logging.getLogger("cartwheel.instrument")
 
 _genai_instrumented = False
+
+# Which homework's code produced a trace, for before/after comparisons
+# across course modules (distinct from cartwheel.prompt_version, which only
+# tracks the system prompt text). Bump this by hand when starting the next
+# homework's work -- it's a human-readable label, not something derived.
+# Shared between server/app.py (the graded HW2 endpoint) and
+# playground/server.py (the personal dev tool) so both tag traces the same
+# way and neither drifts from the other.
+CARTWHEEL_HW_STAGE = "hw3"
+
+
+def _current_git_commit() -> str:
+    """Short commit hash of the running code, computed once at import time
+    (not per-request) since it can't change during one server run. Exact and
+    automatic, unlike CARTWHEEL_HW_STAGE above -- the two are complementary:
+    one says "which homework", the other says "which exact commit"."""
+    try:
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=REPO_ROOT,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return "unknown"
+
+
+CARTWHEEL_GIT_COMMIT = _current_git_commit()
 _openai_tracing_enabled = False
 
 

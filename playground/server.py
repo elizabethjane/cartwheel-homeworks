@@ -1,8 +1,13 @@
 """Local-only playground for testing the Cartwheel agent as different roles.
 
 A personal dev tool, not a graded HW2 deliverable. It reuses
-agent.agent.build_agent directly (no HTTP token/session layer, no OTel
-tracing requirement) so it needs neither Docker nor server/app.py running.
+agent.agent.build_agent directly (no HTTP token/session layer) so it needs
+neither the real server/app.py nor a signed token. It DOES set up the same
+Langfuse/OTel tracing as the graded server, though, and tags each turn with
+the same cartwheel.* attributes -- so conversations you run here show up
+correctly in the trace viewer dashboard, taggable by hw_stage/git_commit
+and (optionally) a scenario_id for HW3 testing. Tracing degrades gracefully
+when Docker/Langfuse isn't running (setup_tracing() just warns and no-ops).
 
 Run with:
     uv run uvicorn playground.server:app --port 8020
@@ -12,23 +17,39 @@ from __future__ import annotations
 
 import ast
 import json
+import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
-from agents import Runner
+from agents import Runner, RunConfig
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
+from opentelemetry import trace
 from pydantic import BaseModel
 
 from agent import db
 from agent import tools as hw_tools
-from agent.agent import build_agent
+from agent.agent import build_agent, prompt_version
 from agent.auth import AuthContext
-from observability.instrument import load_env
+from observability.instrument import (
+    CARTWHEEL_GIT_COMMIT,
+    CARTWHEEL_HW_STAGE,
+    load_env,
+    setup_tracing,
+)
 
 load_env()
 
-app = FastAPI(title="Cartwheel prompt playground")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    setup_tracing()  # no-op with a warning if Docker/Langfuse isn't up
+    yield
+
+
+app = FastAPI(title="Cartwheel prompt playground", lifespan=lifespan)
+_tracer = trace.get_tracer("cartwheel.playground")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -60,6 +81,9 @@ def index() -> FileResponse:
 class ChatIn(BaseModel):
     role: str
     message: str
+    # Optional: tag the resulting trace with a scenario id, e.g. to verify
+    # HW3's scenario-runner tagging works before running it for real.
+    scenario_id: str | None = None
 
 
 @app.post("/api/chat")
@@ -77,15 +101,40 @@ async def chat(body: ChatIn) -> dict[str, Any]:
     reply with just the reason) won't be remembered across two messages
     anymore -- put the whole request in one message instead (the suggested
     prompts already do this, e.g. "I'd like a refund for order 4455, I
-    changed my mind")."""
+    changed my mind").
+
+    Each call runs inside its own cartwheel.session_message root span,
+    tagged the same way server/app.py's post_message tags a real request
+    (role, user id, prompt version, hw_stage, git_commit, and scenario_id
+    when given) -- so playground activity shows up correctly in the trace
+    viewer dashboard. There's no real "session" here (see above), so
+    cartwheel.session_id is a fresh id per call, just for trace correlation,
+    not a claim of conversation continuity.
+    """
     if body.role not in ROLE_USERS:
         return {"error": f"unknown role: {body.role!r}"}
 
     user = ROLE_USERS[body.role]
     ctx = AuthContext(user_id=user["user_id"], role=body.role, store_id=user["store_id"])
     agent = build_agent(ctx)
+    version = prompt_version()
+    pseudo_session_id = f"playground-{uuid.uuid4()}"
 
-    result = await Runner.run(agent, body.message, context=ctx, max_turns=12)
+    with _tracer.start_as_current_span("cartwheel.session_message") as span:
+        if span.is_recording():
+            span.set_attribute("cartwheel.session_id", pseudo_session_id)
+            span.set_attribute("cartwheel.user_role", ctx.role)
+            span.set_attribute("cartwheel.user_id", str(ctx.user_id))
+            span.set_attribute("cartwheel.prompt_version", version)
+            span.set_attribute("cartwheel.hw_stage", CARTWHEEL_HW_STAGE)
+            span.set_attribute("cartwheel.git_commit", CARTWHEEL_GIT_COMMIT)
+            if body.scenario_id:
+                span.set_attribute("cartwheel.scenario_id", body.scenario_id)
+
+        result = await Runner.run(
+            agent, body.message, context=ctx, max_turns=12, run_config=RunConfig()
+        )
+
     return {"reply": result.final_output, "tool_calls": _extract_tool_calls(result.new_items)}
 
 
