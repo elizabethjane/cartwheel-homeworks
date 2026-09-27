@@ -19,6 +19,20 @@
     --red-bg: #fbeae5;
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
   }
+  :root[data-theme="dark"] {
+    --bg: #1b1a17;
+    --panel: #242320;
+    --border: #3a3833;
+    --text: #e8e6e1;
+    --text-dim: #9b968a;
+    --accent: #6fa8dc;
+    --accent-soft: #24344a;
+    --green: #7fc783;
+    --green-bg: #1f2e20;
+    --red: #e08669;
+    --red-bg: #3a211b;
+  }
+  :root[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #45423b; }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; height: 100%;
@@ -37,6 +51,10 @@
   #refresh-btn {
     margin-left: auto; border: 1px solid var(--border); background: var(--panel);
     padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; color: var(--text-dim);
+  }
+  #theme-toggle {
+    border: 1px solid var(--border); background: var(--panel);
+    padding: 6px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; color: var(--text-dim);
   }
 
   .layout { display: flex; flex: 1; min-height: 0; }
@@ -138,7 +156,7 @@
     padding: 6px 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
   }
   .turn-head.user { background: var(--accent-soft); color: var(--accent); }
-  .turn-head.assistant { background: #eef4ee; color: var(--green); }
+  .turn-head.assistant { background: var(--green-bg); color: var(--green); }
   .turn-body { padding: 10px; }
   .msg-text { font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
   .msg-text + .collapsible { margin-top: 8px; }
@@ -191,6 +209,7 @@
   <h1>🔎 Cartwheel Trace Viewer</h1>
   <span class="sub">Read-only — reads live from Langfuse on localhost. No annotation, nothing stored here.</span>
   <button id="refresh-btn">↺ Refresh list</button>
+  <button id="theme-toggle" title="Toggle dark mode">🌙</button>
 </header>
 
 <div class="layout">
@@ -691,6 +710,28 @@ $("#modal-close").onclick = closeModal;
 $("#version-modal-overlay").onclick = (e) => {
   if (e.target.id === "version-modal-overlay") closeModal();
 };
+
+const THEME_KEY = "cartwheel-trace-viewer-theme";
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  $("#theme-toggle").textContent = theme === "dark" ? "☀️" : "🌙";
+}
+
+function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem(THEME_KEY); } catch (err) { /* private mode etc. */ }
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  applyTheme(saved || (prefersDark ? "dark" : "light"));
+}
+
+$("#theme-toggle").onclick = () => {
+  const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  applyTheme(next);
+  try { localStorage.setItem(THEME_KEY, next); } catch (err) { /* private mode etc. */ }
+};
+
+initTheme();
 
 $("#refresh-btn").onclick = loadTraces;
 $("#filter-stage").onchange = renderTraceList;
