@@ -42,9 +42,17 @@
   .layout { display: flex; flex: 1; min-height: 0; }
 
   /* Trace list */
+  #trace-list-pane { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
+  #trace-filters {
+    padding: 10px 12px; background: var(--panel); border-bottom: 1px solid var(--border);
+    display: flex; gap: 6px; flex-shrink: 0;
+  }
+  #trace-filters select {
+    flex: 1; min-width: 0; font-size: 11.5px; padding: 4px 6px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  }
   #trace-list {
-    width: 340px; flex-shrink: 0; overflow-y: auto;
-    border-right: 1px solid var(--border); background: var(--panel);
+    flex: 1; overflow-y: auto; background: var(--panel);
   }
   .trace-row {
     padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 12.5px;
@@ -56,6 +64,7 @@
   .trace-row .ts { color: var(--text-dim); font-weight: 400; }
   .trace-row .preview { color: var(--text-dim); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .trace-row .meta-line { margin-top: 3px; color: var(--text-dim); font-size: 11px; }
+  .trace-row .version-line { color: var(--accent); font-family: var(--mono); }
 
   /* Detail pane */
   #detail { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
@@ -144,7 +153,13 @@
 </header>
 
 <div class="layout">
-  <div id="trace-list"><div class="trace-row">Loading traces…</div></div>
+  <div id="trace-list-pane">
+    <div id="trace-filters">
+      <select id="filter-stage"><option value="">Stage: all</option></select>
+      <select id="filter-commit"><option value="">Commit: all</option></select>
+    </div>
+    <div id="trace-list"><div class="trace-row">Loading traces…</div></div>
+  </div>
 
   <div id="detail">
     <div id="detail-empty">Select a trace on the left.</div>
@@ -180,31 +195,87 @@ function firstText(messages) {
 }
 
 let activeTraceId = null;
+let allTraces = [];
 
-async function loadTraces() {
-  const resp = await fetch("/api/traces?limit=50");
-  const data = await resp.json();
+function traceAttrs(t) {
+  return (t.metadata && t.metadata.attributes) || {};
+}
+
+function populateFilterOptions() {
+  const stageSel = $("#filter-stage");
+  const commitSel = $("#filter-commit");
+  const stages = new Set();
+  const commits = new Set();
+  let untaggedCount = 0;
+  for (const t of allTraces) {
+    const attrs = traceAttrs(t);
+    const stage = attrs["cartwheel.hw_stage"];
+    const commit = attrs["cartwheel.git_commit"];
+    if (stage) stages.add(stage); else untaggedCount++;
+    if (commit) commits.add(commit);
+  }
+  const prevStage = stageSel.value;
+  const prevCommit = commitSel.value;
+  stageSel.innerHTML = '<option value="">Stage: all</option>'
+    + [...stages].sort().map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("")
+    + (untaggedCount ? `<option value="__untagged__">(untagged, ${untaggedCount})</option>` : "");
+  commitSel.innerHTML = '<option value="">Commit: all</option>'
+    + [...commits].sort().map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+  stageSel.value = [...stageSel.options].some(o => o.value === prevStage) ? prevStage : "";
+  commitSel.value = [...commitSel.options].some(o => o.value === prevCommit) ? prevCommit : "";
+}
+
+function renderTraceList() {
   const list = $("#trace-list");
-  if (!data.data || !data.data.length) {
+  const stageFilter = $("#filter-stage").value;
+  const commitFilter = $("#filter-commit").value;
+
+  const filtered = allTraces.filter(t => {
+    const attrs = traceAttrs(t);
+    const stage = attrs["cartwheel.hw_stage"];
+    if (stageFilter === "__untagged__" && stage) return false;
+    if (stageFilter && stageFilter !== "__untagged__" && stage !== stageFilter) return false;
+    if (commitFilter && attrs["cartwheel.git_commit"] !== commitFilter) return false;
+    return true;
+  });
+
+  if (!allTraces.length) {
     list.innerHTML = '<div class="trace-row">No traces found in Langfuse yet.</div>';
     return;
   }
-  list.innerHTML = data.data.map(t => {
-    const attrs = (t.metadata && t.metadata.attributes) || {};
+  if (!filtered.length) {
+    list.innerHTML = '<div class="trace-row">No traces match this filter.</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(t => {
+    const attrs = traceAttrs(t);
     const role = attrs["cartwheel.user_role"] || "?";
     const userId = attrs["cartwheel.user_id"] || "?";
+    const stage = attrs["cartwheel.hw_stage"];
+    const commit = attrs["cartwheel.git_commit"];
     const req = firstText(t.input) || '<span class="missing">no input recorded</span>';
     const latency = t.latency != null ? t.latency.toFixed(2) + "s" : '<span class="missing">—</span>';
+    const versionBits = [stage, commit].filter(Boolean).join(" @ ");
     return `
       <div class="trace-row" data-id="${escapeHtml(t.id)}">
         <div class="row1"><span class="role-tag">${escapeHtml(role)} · user ${escapeHtml(userId)}</span> <span class="ts">${escapeHtml(new Date(t.timestamp).toLocaleTimeString())}</span></div>
         <div class="preview">${typeof req === "string" ? escapeHtml(req) : req}</div>
         <div class="meta-line">latency ${latency} · id ${escapeHtml(t.id.slice(0, 12))}…</div>
+        ${versionBits ? `<div class="meta-line version-line">${escapeHtml(versionBits)}</div>` : ""}
       </div>`;
   }).join("");
   $$(".trace-row[data-id]", list).forEach(row => {
     row.onclick = () => selectTrace(row.dataset.id);
   });
+}
+
+async function loadTraces() {
+  const resp = await fetch("/api/traces?limit=50");
+  const data = await resp.json();
+  allTraces = data.data || [];
+  populateFilterOptions();
+  renderTraceList();
 }
 
 function renderCollapsible(headerHtml, bodyHtml, extraClass) {
@@ -386,6 +457,8 @@ async function selectTrace(traceId) {
 }
 
 $("#refresh-btn").onclick = loadTraces;
+$("#filter-stage").onchange = renderTraceList;
+$("#filter-commit").onchange = renderTraceList;
 loadTraces();
 </script>
 </body>
