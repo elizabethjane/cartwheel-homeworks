@@ -82,32 +82,37 @@
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
 
-  /* Conversation view */
+  /* Unified trace view: system/user/assistant turns, always visible */
   .turn { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
   .turn-head {
     padding: 6px 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
   }
-  .turn-head.system { background: #f0eee8; color: var(--text-dim); }
   .turn-head.user { background: var(--accent-soft); color: var(--accent); }
   .turn-head.assistant { background: #eef4ee; color: var(--green); }
-  .turn-head.tool { background: #f5f0e8; color: #8a6d1f; }
-  .turn-body { padding: 10px; font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
-  .part-toolcall {
-    margin-top: 8px; padding: 8px; background: var(--bg); border-radius: 6px; font-family: var(--mono); font-size: 11.5px;
-  }
-  .part-toolcall .id { color: var(--text-dim); }
+  .turn-body { padding: 10px; }
+  .msg-text { font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
+  .msg-text + .collapsible { margin-top: 8px; }
 
-  /* Tool calls view */
-  .tool-card { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
-  .tool-card.failed { border-color: var(--red); }
-  .tool-card-head {
-    padding: 8px 12px; background: var(--bg); display: flex; justify-content: space-between; align-items: center;
-    cursor: pointer;
+  /* Collapsible blocks: system prompt + tool calls, both collapsed by default */
+  .collapsible { border: 1px solid var(--border); border-radius: 8px; margin: 8px 0; overflow: hidden; }
+  .collapsible:first-child { margin-top: 0; }
+  .collapsible-head {
+    padding: 7px 10px; background: var(--bg); cursor: pointer; font-size: 12px;
+    display: flex; align-items: center; gap: 7px;
   }
-  .tool-card-head .name { font-family: var(--mono); font-weight: 700; font-size: 13px; }
-  .tool-card-head .timing { font-size: 11px; color: var(--text-dim); }
-  .tool-card-body { padding: 10px 12px; display: none; }
-  .tool-card-body.open { display: block; }
+  .collapsible.system-block { margin-bottom: 12px; }
+  .collapsible.system-block .collapsible-head {
+    font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; font-size: 11px; color: var(--text-dim);
+  }
+  .collapsible.tool-block.failed { border-color: var(--red); }
+  .chevron { display: inline-block; transition: transform 0.15s; font-size: 10px; }
+  .collapsible.open .chevron { transform: rotate(90deg); }
+  .collapsible-body { display: none; padding: 10px 12px; }
+  .collapsible.open .collapsible-body { display: block; }
+  .fail-tag { color: var(--red); font-weight: 700; font-size: 11px; }
+  .ok-tag { color: var(--green); font-weight: 700; font-size: 11px; }
+  .dim { color: var(--text-dim); font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: normal; margin-left: auto; }
+
   .tool-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 8px 0 3px; }
   .tool-label:first-child { margin-top: 0; }
   pre.code-block {
@@ -115,7 +120,7 @@
     background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
     padding: 8px 10px; overflow: auto; white-space: pre-wrap; word-break: break-word;
   }
-  .tool-card.failed pre.code-block.result { background: var(--red-bg); border-color: var(--red); }
+  pre.code-block.result-fail { background: var(--red-bg); border-color: var(--red); }
   .attr-row { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
   .attr-row .flag-true { color: var(--red); font-weight: 700; }
   .attr-row .flag-false { color: var(--green); }
@@ -202,63 +207,116 @@ async function loadTraces() {
   });
 }
 
-function renderConversation(conversation) {
+function renderCollapsible(headerHtml, bodyHtml, extraClass) {
+  return `
+    <div class="collapsible ${extraClass || ""}">
+      <div class="collapsible-head" onclick="this.parentElement.classList.toggle('open')">
+        <span class="chevron">▶</span> ${headerHtml}
+      </div>
+      <div class="collapsible-body">${bodyHtml}</div>
+    </div>
+  `;
+}
+
+function renderToolBlock(part, obs, responseText) {
+  const failed = obs && obs.output && obs.output.ok === false;
+  const name = part.name || (obs && obs.name) || "unknown_tool";
+  const args = part.arguments !== undefined ? part.arguments : (obs ? obs.input : undefined);
+  const attrs = (obs && obs.metadata && obs.metadata.attributes) || {};
+  const latency = obs && obs.latency != null ? (obs.latency * 1000).toFixed(0) + "ms" : null;
+  const attrRows = Object.entries(attrs)
+    .filter(([k]) => k.startsWith("cartwheel."))
+    .map(([k, v]) => {
+      const cls = v === "true" ? "flag-true" : (v === "false" ? "flag-false" : "");
+      return `<div class="attr-row">${escapeHtml(k)}: <span class="${cls}">${escapeHtml(v)}</span></div>`;
+    }).join("");
+
+  const statusTag = failed ? '<span class="fail-tag">FAILED</span>' : (obs ? '<span class="ok-tag">ok</span>' : "");
+  const timingBits = [latency, obs ? "obs " + (obs.id || "").slice(0, 8) + "…" : null].filter(Boolean).join(" · ");
+  const header = `🔧 <strong>${escapeHtml(name)}</strong> ${statusTag} <span class="dim">${escapeHtml(timingBits)}</span>`;
+
+  const resultBlock = obs
+    ? `<pre class="code-block ${failed ? "result-fail" : ""}">${fmtJson(obs.output)}</pre>`
+    : (responseText != null
+        ? `<pre class="code-block">${escapeHtml(responseText)}</pre>`
+        : '<p class="missing">No result recorded (no matching TOOL observation and no tool response found).</p>');
+
+  const body = `
+    <div class="tool-label">Call ID</div>
+    <div class="attr-row">${escapeHtml(part.id || "missing")}</div>
+    <div class="tool-label">Arguments</div>
+    <pre class="code-block">${fmtJson(args)}</pre>
+    <div class="tool-label">Result</div>
+    ${resultBlock}
+    ${obs ? `
+      <div class="tool-label">Started / Ended</div>
+      <div class="attr-row">${fmtTime(obs.startTime)} → ${fmtTime(obs.endTime)}</div>
+      <div class="tool-label">Attributes</div>
+      ${attrRows || '<div class="attr-row missing">none recorded</div>'}
+      <div class="tool-label">Status</div>
+      <div class="attr-row">level: ${escapeHtml(obs.level)} ${obs.statusMessage ? "— " + escapeHtml(obs.statusMessage) : ""}</div>
+    ` : '<div class="attr-row missing">No matching TOOL observation found for this call.</div>'}
+  `;
+
+  return renderCollapsible(header, body, "tool-block" + (failed ? " failed" : ""));
+}
+
+function renderTrace(conversation, toolCalls) {
   if (!conversation || !conversation.length) {
     return '<p class="missing">No conversation recorded for this trace.</p>';
   }
-  return conversation.map(msg => {
+
+  // Tool responses live in separate "tool"-role messages in the raw
+  // conversation, keyed by the same call id the assistant's tool_call part
+  // carries -- used as a fallback if no TOOL observation matches.
+  const responsesByCallId = {};
+  for (const msg of conversation) {
+    if (msg.role !== "tool") continue;
+    for (const part of msg.parts || []) {
+      if (part.type === "tool_call_response") responsesByCallId[part.id] = part.response;
+    }
+  }
+
+  // TOOL observations are already sorted by startTime; matched to tool_call
+  // parts positionally, in the order each is encountered. Exact for every
+  // trace we've tested (one tool call per turn, sequential), best-effort if
+  // a future trace ever calls multiple tools in parallel within one turn.
+  const toolQueue = [...(toolCalls || [])];
+  let toolIndex = 0;
+
+  let html = "";
+  for (const msg of conversation) {
     const role = msg.role || "unknown";
+
+    if (role === "system") {
+      const text = (msg.parts || []).map(p => p.type === "text" ? (p.content ?? "") : JSON.stringify(p)).join("\n");
+      html += renderCollapsible(
+        "SYSTEM PROMPT",
+        `<div class="msg-text">${escapeHtml(text)}</div>`,
+        "system-block"
+      );
+      continue;
+    }
+    if (role === "tool") {
+      continue; // merged into the preceding assistant turn's tool block
+    }
+
     let body = "";
     for (const part of msg.parts || []) {
       if (part.type === "text") {
-        body += escapeHtml(part.content ?? "");
+        if ((part.content ?? "").trim() !== "") {
+          body += `<div class="msg-text">${escapeHtml(part.content)}</div>`;
+        }
       } else if (part.type === "tool_call") {
-        body += `<div class="part-toolcall">🔧 <strong>${escapeHtml(part.name)}</strong>(${escapeHtml(JSON.stringify(part.arguments))})<br><span class="id">call id: ${escapeHtml(part.id || "missing")}</span></div>`;
-      } else if (part.type === "tool_call_response") {
-        body += `<div class="part-toolcall">↩ response for call id: <span class="id">${escapeHtml(part.id || "missing")}</span><br>${escapeHtml(part.response ?? "")}</div>`;
+        const obs = toolQueue[toolIndex++];
+        body += renderToolBlock(part, obs, responsesByCallId[part.id]);
       } else {
-        body += `<div class="part-toolcall">(unrecognized part type: ${escapeHtml(part.type)})<br>${fmtJson(part)}</div>`;
+        body += `<div class="msg-text">(unrecognized part type: ${escapeHtml(part.type)})</div><pre class="code-block">${fmtJson(part)}</pre>`;
       }
     }
-    return `<div class="turn"><div class="turn-head ${escapeHtml(role)}">${escapeHtml(role)}</div><div class="turn-body">${body || '<span class="missing">empty</span>'}</div></div>`;
-  }).join("");
-}
-
-function renderToolCalls(toolCalls) {
-  if (!toolCalls || !toolCalls.length) {
-    return '<p class="missing">No tool calls in this trace.</p>';
+    html += `<div class="turn"><div class="turn-head ${escapeHtml(role)}">${escapeHtml(role)}</div><div class="turn-body">${body || '<span class="missing">empty</span>'}</div></div>`;
   }
-  return toolCalls.map((obs, i) => {
-    const failed = obs.output && obs.output.ok === false;
-    const attrs = (obs.metadata && obs.metadata.attributes) || {};
-    const permDenied = attrs["cartwheel.permission_denied"];
-    const latency = obs.latency != null ? (obs.latency * 1000).toFixed(0) + "ms" : "—";
-    const attrRows = Object.entries(attrs)
-      .filter(([k]) => k.startsWith("cartwheel."))
-      .map(([k, v]) => {
-        const cls = v === "true" ? "flag-true" : (v === "false" ? "flag-false" : "");
-        return `<div class="attr-row">${escapeHtml(k)}: <span class="${cls}">${escapeHtml(v)}</span></div>`;
-      }).join("");
-    return `
-      <div class="tool-card ${failed ? "failed" : ""}">
-        <div class="tool-card-head" onclick="this.nextElementSibling.classList.toggle('open')">
-          <span class="name">🔧 ${escapeHtml(obs.name)}${failed ? " — FAILED" : ""}</span>
-          <span class="timing">${latency} · obs id ${escapeHtml((obs.id || "").slice(0, 10))}…</span>
-        </div>
-        <div class="tool-card-body ${i === 0 ? "open" : ""}">
-          <div class="tool-label">Started / Ended</div>
-          <div>${fmtTime(obs.startTime)} → ${fmtTime(obs.endTime)}</div>
-          <div class="tool-label">Arguments</div>
-          <pre class="code-block">${fmtJson(obs.input)}</pre>
-          <div class="tool-label">Result</div>
-          <pre class="code-block result">${fmtJson(obs.output)}</pre>
-          <div class="tool-label">Attributes</div>
-          ${attrRows || '<div class="attr-row missing">none recorded</div>'}
-          <div class="tool-label">Status</div>
-          <div class="attr-row">level: ${escapeHtml(obs.level)} ${obs.statusMessage ? "— " + escapeHtml(obs.statusMessage) : ""}</div>
-        </div>
-      </div>`;
-  }).join("");
+  return html;
 }
 
 function renderRaw(data) {
@@ -308,13 +366,11 @@ async function selectTrace(traceId) {
       </div>
     </div>
     <div class="tabs">
-      <button class="tab-btn active" data-tab="conversation">Conversation</button>
-      <button class="tab-btn" data-tab="tools">Tool Calls (${data.tool_calls.length})</button>
+      <button class="tab-btn active" data-tab="trace">Trace</button>
       <button class="tab-btn" data-tab="raw">Raw</button>
     </div>
     <div class="tab-content">
-      <div class="tab-panel active" data-panel="conversation">${renderConversation(data.conversation)}</div>
-      <div class="tab-panel" data-panel="tools">${renderToolCalls(data.tool_calls)}</div>
+      <div class="tab-panel active" data-panel="trace">${renderTrace(data.conversation, data.tool_calls)}</div>
       <div class="tab-panel" data-panel="raw">${renderRaw(data)}</div>
     </div>
   `;

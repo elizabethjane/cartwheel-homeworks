@@ -80,9 +80,42 @@ def _richest_generation(observations: list[dict[str, Any]]) -> dict[str, Any] | 
     return max(generations, key=lambda o: len(o.get("input") or []))
 
 
+def _message_text(messages: Any) -> str | None:
+    """The first text part's content out of a Langfuse message or
+    single-item message list, or None if there isn't one."""
+    if not messages:
+        return None
+    msg = messages[0] if isinstance(messages, list) else messages
+    for part in msg.get("parts") or []:
+        if part.get("type") == "text":
+            return part.get("content")
+    return None
+
+
 def _build_conversation(trace: dict[str, Any], observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     richest = _richest_generation(observations)
-    conversation = list(richest["input"]) if richest and richest.get("input") else []
+    full_history = list(richest["input"]) if richest and richest.get("input") else []
+
+    # A session in this app can span multiple HTTP requests (server/app.py's
+    # SQLiteSession persists per session_id across calls), so a GENERATION's
+    # own `input` can carry far more than just this trace's own exchange --
+    # every earlier request's turns too. Scope down to where THIS trace's
+    # own request actually starts: the last user turn in the full history
+    # whose text matches this trace's own recorded input (last, not first,
+    # in case the same question was asked in an earlier unrelated request).
+    # The system prompt (always first, if present) is kept regardless.
+    request_text = _message_text(trace.get("input"))
+    start_index = 0
+    if request_text is not None:
+        for i in range(len(full_history) - 1, -1, -1):
+            msg = full_history[i]
+            if msg.get("role") == "user" and _message_text([msg]) == request_text:
+                start_index = i
+                break
+
+    system_prefix = full_history[:1] if full_history and full_history[0].get("role") == "system" else []
+    conversation = system_prefix + full_history[start_index:] if start_index > 0 else full_history
+
     final_output = trace.get("output")
     if final_output:
         # Avoid duplicating the final reply if it's somehow already the
