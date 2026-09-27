@@ -357,6 +357,8 @@ async function selectTrace(traceId) {
         <span class="badge">${escapeHtml(attrs["cartwheel.user_role"] || "role: —")}</span>
         <span class="badge">user ${escapeHtml(attrs["cartwheel.user_id"] || "—")}</span>
         <span class="badge">prompt_version ${escapeHtml(attrs["cartwheel.prompt_version"] || "—")}</span>
+        ${attrs["cartwheel.hw_stage"] ? `<span class="badge">${escapeHtml(attrs["cartwheel.hw_stage"])}</span>` : ""}
+        ${attrs["cartwheel.git_commit"] ? `<span class="badge">commit ${escapeHtml(attrs["cartwheel.git_commit"])}</span>` : ""}
         <span class="badge">${escapeHtml(t.timestamp ? new Date(t.timestamp).toLocaleString() : "no timestamp")}</span>
         <span class="badge">latency ${t.latency != null ? t.latency.toFixed(2) + "s" : "—"}</span>
         <span class="badge">cost ${t.totalCost != null ? "$" + t.totalCost.toFixed(4) : "—"}</span>

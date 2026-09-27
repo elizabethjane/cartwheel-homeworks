@@ -27,6 +27,7 @@ import hashlib
 import hmac
 import json
 import os
+import subprocess
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -45,6 +46,34 @@ from observability.instrument import load_env, setup_tracing
 
 MAX_TURNS = 12  # cap runaway loops; keeps conversations bounded
 SESSIONS_DB = REPO_ROOT / ".sessions.db"
+
+# Which homework's code produced this trace, for before/after comparisons
+# across course modules (distinct from cartwheel.prompt_version, which only
+# tracks the system prompt text). Bump this by hand when starting the next
+# homework's work -- it's a human-readable label, not something derived.
+CARTWHEEL_HW_STAGE = "hw2"
+
+
+def _current_git_commit() -> str:
+    """Short commit hash of the running code, computed once at import time
+    (not per-request) since it can't change during one server run. Exact and
+    automatic, unlike CARTWHEEL_HW_STAGE above -- the two are complementary:
+    one says "which homework", the other says "which exact commit"."""
+    try:
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=REPO_ROOT,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return "unknown"
+
+
+CARTWHEEL_GIT_COMMIT = _current_git_commit()
 
 _tracer = trace.get_tracer("cartwheel.server")
 
@@ -177,9 +206,11 @@ async def post_message(
     Authorize the token, recover the server-side session, and build the agent
     for the authenticated context. Compute the rendered prompt's version.
     The cartwheel.session_message span must record the user role, user id,
-    prompt version, and a nonempty scenario id when one is supplied. Run the
-    agent inside that span, then return the session id, final reply, and
-    prompt version.
+    prompt version, and a nonempty scenario id when one is supplied. It also
+    records cartwheel.hw_stage and cartwheel.git_commit, so traces can be
+    compared across homework stages and exact code versions, not just
+    prompt versions. Run the agent inside that span, then return the
+    session id, final reply, and prompt version.
     When TRACELOOP_TRACE_CONTENT is true, record gen_ai.input.messages and
     gen_ai.output.messages on the root span as JSON arrays of OTel GenAI
     messages with role and parts fields.
@@ -203,6 +234,8 @@ async def post_message(
             span.set_attribute("cartwheel.user_role", ctx.role)
             span.set_attribute("cartwheel.user_id", str(ctx.user_id))
             span.set_attribute("cartwheel.prompt_version", version)
+            span.set_attribute("cartwheel.hw_stage", CARTWHEEL_HW_STAGE)
+            span.set_attribute("cartwheel.git_commit", CARTWHEEL_GIT_COMMIT)
             if body.scenario_id:
                 span.set_attribute("cartwheel.scenario_id", body.scenario_id)
             if capture_content:
