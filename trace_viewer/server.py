@@ -15,13 +15,16 @@ Run with:
 from __future__ import annotations
 
 import os
+import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from agent.config import REPO_ROOT
 from observability.instrument import load_env
 
 load_env()
@@ -32,6 +35,13 @@ LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "")
 
 app = FastAPI(title="Cartwheel trace viewer")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+# Matches a full or short git hash. Deliberately strict: these values come
+# from Langfuse trace attributes (which the frontend lets you click), and a
+# ref beginning with "-" would otherwise be interpreted by git as a flag
+# (argument injection), not a revision -- reject anything that isn't a
+# plain hex hash before it ever reaches subprocess.
+_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{4,40}$")
 
 _client = httpx.Client(
     base_url=LANGFUSE_HOST,
@@ -151,3 +161,70 @@ def trace_detail(trace_id: str) -> dict[str, Any]:
         "conversation": _build_conversation(trace, observations),
         "tool_calls": tool_calls,
     }
+
+
+# ---------------------------------------------------------------------------
+# Git: mapping the cartwheel.hw_stage / cartwheel.git_commit trace tags back
+# to actual code changes, so a stage or commit tag in the UI can answer
+# "what's actually different here" -- not just "what's the label".
+# ---------------------------------------------------------------------------
+
+
+def _require_commit_ref(commit: str) -> str:
+    if not _COMMIT_RE.match(commit):
+        raise HTTPException(status_code=400, detail=f"not a valid commit hash: {commit!r}")
+    return commit
+
+
+def _git(args: list[str]) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", *args], cwd=REPO_ROOT, stderr=subprocess.PIPE
+        ).decode(errors="replace")
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="git is not installed on this machine")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"git {' '.join(args)} failed: {exc.stderr.decode(errors='replace')[:300]}",
+        )
+
+
+@app.get("/api/git/commit/{commit}")
+def commit_detail(commit: str) -> dict[str, Any]:
+    """One commit's metadata, file-change stat, and full diff against its
+    immediate git parent -- i.e. exactly the code change that produced this
+    commit, which is what a cartwheel.git_commit trace tag actually means."""
+    commit = _require_commit_ref(commit)
+    fmt = "%H%x1f%h%x1f%an%x1f%aI%x1f%B"
+    raw = _git(["show", "-s", f"--format={fmt}", commit])
+    full_hash, short_hash, author, date, message = raw.strip("\n").split("\x1f", 4)
+    stat = _git(["show", "--stat", "--format=", commit]).strip()
+    diff = _git(["show", "--format=", commit])
+    parent = None
+    try:
+        parent = _git(["rev-parse", f"{commit}~1"]).strip()
+    except HTTPException:
+        pass  # this is the repo's first commit; no parent to name
+    return {
+        "hash": full_hash,
+        "short_hash": short_hash,
+        "author": author,
+        "date": date,
+        "message": message.strip(),
+        "parent": parent,
+        "stat": stat,
+        "diff": diff,
+    }
+
+
+@app.get("/api/git/diff")
+def git_diff(from_: str = Query(..., alias="from"), to: str = Query(...)) -> dict[str, Any]:
+    """Diff between two arbitrary commits -- used to compare two hw_stage
+    tags (e.g. the latest commit seen under hw1 vs. the latest under hw2),
+    not just a commit against its own immediate parent."""
+    from_ref = _require_commit_ref(from_)
+    to_ref = _require_commit_ref(to)
+    stat = _git(["diff", "--stat", f"{from_ref}..{to_ref}"]).strip()
+    diff = _git(["diff", f"{from_ref}..{to_ref}"])
+    return {"from": from_ref, "to": to_ref, "stat": stat, "diff": diff}
